@@ -18,7 +18,6 @@ import recurringPledgesRoutes from './routes/recurringPledgesRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 
-
 dotenv.config();
 
 const app = express();
@@ -28,15 +27,44 @@ const PORT = process.env.PORT || 5000;
 // MIDDLEWARE - Must come BEFORE routes!
 // ==========================================
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173'],
+  origin: [
+    'http://localhost:5173', 
+    'http://localhost:3000', 
+    'http://127.0.0.1:5173',
+    'https://webale-frontend.vercel.app',
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(express.json());
 
 // ==========================================
-// ROUTES
+// HOME ROUTE - Shows API is running
+// ==========================================
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Webale Fundraising API is running',
+    version: '1.0.0',
+    endpoints: {
+      auth: '/api/auth',
+      groups: '/api/groups',
+      pledges: '/api/pledges',
+      health: '/health'
+    }
+  });
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// ==========================================
+// API ROUTES
 // ==========================================
 app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
@@ -49,16 +77,10 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/sub-goals', subGoalsRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/messages', messagesRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/recurring-pledges', recurringPledgesRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payments', paymentRoutes);
-
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Server is running' });
-});
 
 // ==========================================
 // START SERVER

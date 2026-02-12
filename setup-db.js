@@ -8,101 +8,48 @@ const pool = new Pool({
 
 async function setup() {
   try {
-    console.log('Adding missing columns and tables...');
+    console.log('Fixing notifications table...');
     
-    // Add missing columns to users table
+    // Add group_id column to notifications
     await pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
-    `).catch(() => console.log('bio column may already exist'));
-    
-    await pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar VARCHAR(50);
-    `).catch(() => console.log('avatar column may already exist'));
-    
-    await pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
-    `).catch(() => console.log('is_verified column may already exist'));
-    
-    await pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-    `).catch(() => console.log('updated_at column may already exist'));
-    
-    console.log('Users table updated');
-    
-    // Create notifications table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS notifications (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER,
-        type VARCHAR(100),
-        title VARCHAR(255),
-        message TEXT,
-        is_read BOOLEAN DEFAULT FALSE,
-        link VARCHAR(500),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS group_id INTEGER;
     `);
-    console.log('Notifications table created');
+    console.log('Added group_id to notifications');
     
-    // Create activities table
+    // Add any other missing columns
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS activities (
-        id SERIAL PRIMARY KEY,
-        group_id INTEGER,
-        user_id INTEGER,
-        activity_type VARCHAR(100),
-        description TEXT,
-        amount DECIMAL(15,2),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS data TEXT;
     `);
-    console.log('Activities table created');
+    console.log('Added data to notifications');
     
-    // Create comments table
+    // Add first_name and last_name to pledges for anonymous display
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS comments (
-        id SERIAL PRIMARY KEY,
-        group_id INTEGER,
-        user_id INTEGER,
-        content TEXT NOT NULL,
-        is_pinned BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
+      ALTER TABLE pledges ADD COLUMN IF NOT EXISTS notes TEXT;
     `);
-    console.log('Comments table created');
+    console.log('Added notes to pledges');
     
-    // Create sub_goals table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS sub_goals (
-        id SERIAL PRIMARY KEY,
-        group_id INTEGER,
-        name VARCHAR(255) NOT NULL,
-        target_amount DECIMAL(15,2) NOT NULL,
-        current_amount DECIMAL(15,2) DEFAULT 0,
-        description TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
+      ALTER TABLE pledges ADD COLUMN IF NOT EXISTS due_date DATE;
     `);
-    console.log('Sub-goals table created');
+    console.log('Added due_date to pledges');
     
-    // Create payment_transactions table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS payment_transactions (
-        id SERIAL PRIMARY KEY,
-        group_id INTEGER,
-        pledge_id INTEGER,
-        user_id INTEGER,
-        amount DECIMAL(15,2) NOT NULL,
-        currency VARCHAR(10) DEFAULT 'USD',
-        payment_method VARCHAR(50),
-        transaction_id VARCHAR(255),
-        status VARCHAR(50) DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
+      ALTER TABLE pledges ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP;
     `);
-    console.log('Payment transactions table created');
+    console.log('Added paid_at to pledges');
     
-    console.log('All updates completed successfully!');
+    await pool.query(`
+      ALTER TABLE pledges ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'USD';
+    `);
+    console.log('Added currency to pledges');
+    
+    // Add updated_at to groups
+    await pool.query(`
+      ALTER TABLE groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    `);
+    console.log('Added updated_at to groups');
+    
+    console.log('All fixes completed successfully!');
     pool.end();
     process.exit(0);
   } catch (err) {

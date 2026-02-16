@@ -32,6 +32,8 @@ app.use(cors({
     'http://localhost:3000', 
     'http://127.0.0.1:5173',
     'https://webale-frontend.vercel.app',
+    'https://webale.net',
+    'https://www.webale.net',
     process.env.FRONTEND_URL
   ].filter(Boolean),
   credentials: true,

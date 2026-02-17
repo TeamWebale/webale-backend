@@ -24,11 +24,15 @@ export const register = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create user
+    // Random avatar on registration
+    const avatars = ['😀','😎','🤓','😊','🥳','😇','🤩','😏','🧑‍💼','👨‍🎨','👩‍💻','🧑‍🚀','🦸','🧙','👑','🌟'];
+    const randomAvatar = avatars[Math.floor(Math.random() * avatars.length)];
+
     const result = await db.query(
-      `INSERT INTO users (email, password, first_name, last_name, country, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       RETURNING id, email, first_name, last_name, country, created_at`,
-      [email, hashedPassword, firstName, lastName, country || null]
+      `INSERT INTO users (email, password, first_name, last_name, country, avatar_url, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING *`,
+      [email, hashedPassword, firstName, lastName, country || null, randomAvatar]
     );
 
     const user = result.rows[0];
@@ -48,9 +52,11 @@ export const register = async (req, res) => {
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.first_name,
-          lastName: user.last_name,
-          country: user.country
+          first_name: user.first_name,
+          last_name: user.last_name,
+          country: user.country,
+          avatar: user.avatar_url,
+          created_at: user.created_at
         }
       }
     });
@@ -113,11 +119,13 @@ export const login = async (req, res) => {
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.first_name,
-          lastName: user.last_name,
+          first_name: user.first_name,
+          last_name: user.last_name,
           country: user.country,
-          avatarUrl: user.avatar_url,
-          avatarType: user.avatar_type
+          avatar: user.avatar_url,
+          phone: user.phone,
+          bio: user.bio,
+          created_at: user.created_at
         }
       }
     });

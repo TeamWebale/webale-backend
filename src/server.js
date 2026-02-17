@@ -17,6 +17,7 @@ import auditRoutes from './routes/auditRoutes.js';
 import recurringPledgesRoutes from './routes/recurringPledgesRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import invitationsRoutes from './routes/invitationsRoutes.js';
 
 dotenv.config();
 
@@ -83,6 +84,7 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/recurring-pledges', recurringPledgesRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/invitations', invitationsRoutes);
 
 // ==========================================
 // START SERVER

@@ -474,7 +474,7 @@ router.post('/:id/invite', auth, async (req, res) => {
       invitations.push({
         email,
         token,
-        inviteLink: `http://localhost:5173/invite/${token}`
+       inviteLink: `${process.env.FRONTEND_URL || 'https://www.webale.net'}/invite/${token}`
       });
     }
 

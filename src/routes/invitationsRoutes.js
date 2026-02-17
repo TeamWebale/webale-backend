@@ -1,27 +1,10 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import db from '../config/database.js';
 
 const router = express.Router();
 
-// Auth middleware (optional - only needed for accept)
-const optionalAuth = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (token) {
-    try {
-      const jwt = await import('jsonwebtoken');
-      const decoded = jwt.default.verify(token, process.env.JWT_SECRET);
-      req.user = decoded;
-    } catch (e) {
-      // Token invalid, continue without auth
-    }
-  }
-  next();
-};
-
-// ==========================================
-// GET /api/invitations/:token/validate
-// Validates an invitation token - NO AUTH REQUIRED
-// ==========================================
+// GET /api/invitations/:token/validate - NO AUTH REQUIRED
 router.get('/:token/validate', async (req, res) => {
   try {
     const { token } = req.params;
@@ -37,28 +20,17 @@ router.get('/:token/validate', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Invitation not found'
-      });
+      return res.status(404).json({ success: false, message: 'Invitation not found' });
     }
 
     const invitation = result.rows[0];
 
-    // Check if already accepted
     if (invitation.status === 'accepted') {
-      return res.status(400).json({
-        success: false,
-        message: 'This invitation has already been accepted'
-      });
+      return res.status(400).json({ success: false, message: 'This invitation has already been accepted' });
     }
 
-    // Check if expired
     if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: 'This invitation has expired'
-      });
+      return res.status(400).json({ success: false, message: 'This invitation has expired' });
     }
 
     res.json({
@@ -78,115 +50,66 @@ router.get('/:token/validate', async (req, res) => {
     });
   } catch (error) {
     console.error('Validate invitation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to validate invitation'
-    });
+    res.status(500).json({ success: false, message: 'Failed to validate invitation' });
   }
 });
 
-// ==========================================
-// POST /api/invitations/:token/accept
-// Accepts an invitation - AUTH REQUIRED
-// ==========================================
+// POST /api/invitations/:token/accept - AUTH REQUIRED
 router.post('/:token/accept', async (req, res) => {
   try {
     const { token } = req.params;
     const { visibilityPreference } = req.body;
 
-    // Check auth
     const authHeader = req.headers.authorization;
     if (!authHeader) {
-      return res.status(401).json({
-        success: false,
-        message: 'Please log in to accept this invitation'
-      });
+      return res.status(401).json({ success: false, message: 'Please log in to accept this invitation' });
     }
 
     let userId;
     try {
-      const jwt = await import('jsonwebtoken');
-      const decoded = jwt.default.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+      const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
       userId = decoded.id || decoded.userId;
     } catch (e) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid or expired session. Please log in again.'
-      });
+      return res.status(401).json({ success: false, message: 'Invalid or expired session. Please log in again.' });
     }
 
-    // Get invitation
-    const invResult = await db.query(
-      `SELECT * FROM invitations WHERE token = $1`,
-      [token]
-    );
+    const invResult = await db.query(`SELECT * FROM invitations WHERE token = $1`, [token]);
 
     if (invResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Invitation not found'
-      });
+      return res.status(404).json({ success: false, message: 'Invitation not found' });
     }
 
     const invitation = invResult.rows[0];
 
     if (invitation.status === 'accepted') {
-      return res.status(400).json({
-        success: false,
-        message: 'This invitation has already been accepted'
-      });
+      return res.status(400).json({ success: false, message: 'This invitation has already been accepted' });
     }
 
     if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: 'This invitation has expired'
-      });
+      return res.status(400).json({ success: false, message: 'This invitation has expired' });
     }
 
-    // Check if user is already a member
     const memberCheck = await db.query(
       `SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2`,
       [invitation.group_id, userId]
     );
 
     if (memberCheck.rows.length > 0) {
-      // Already a member, just mark invitation as accepted
-      await db.query(
-        `UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`,
-        [invitation.id]
-      );
-      return res.json({
-        success: true,
-        message: 'You are already a member of this group',
-        data: { groupId: invitation.group_id }
-      });
+      await db.query(`UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [invitation.id]);
+      return res.json({ success: true, message: 'You are already a member of this group', data: { groupId: invitation.group_id } });
     }
 
-    // Add user to group
     await db.query(
-      `INSERT INTO group_members (group_id, user_id, role, joined_at)
-       VALUES ($1, $2, 'member', NOW())`,
+      `INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES ($1, $2, 'member', NOW())`,
       [invitation.group_id, userId]
     );
 
-    // Mark invitation as accepted
-    await db.query(
-      `UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`,
-      [invitation.id]
-    );
+    await db.query(`UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [invitation.id]);
 
-    res.json({
-      success: true,
-      message: 'Successfully joined the group!',
-      data: { groupId: invitation.group_id }
-    });
+    res.json({ success: true, message: 'Successfully joined the group!', data: { groupId: invitation.group_id } });
   } catch (error) {
     console.error('Accept invitation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to accept invitation'
-    });
+    res.status(500).json({ success: false, message: 'Failed to accept invitation' });
   }
 });
 

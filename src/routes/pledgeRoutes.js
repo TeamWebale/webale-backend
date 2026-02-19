@@ -8,6 +8,7 @@ import {
   getGroupPledges,
   getUserNotificationPreferences,
   updateNotificationPreferences,
+  updatePledge,
 } from '../controllers/pledgeController.js';
 
 const router = express.Router();
@@ -19,5 +20,6 @@ router.post('/:groupId/contribution', auth, addManualContribution);
 router.get('/:groupId/pledges', auth, getGroupPledges);
 router.get('/preferences', auth, getUserNotificationPreferences);
 router.put('/preferences', auth, updateNotificationPreferences);
+router.put('/:groupId/pledge/:pledgeId', auth, updatePledge);
 
 export default router;

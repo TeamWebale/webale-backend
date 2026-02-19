@@ -199,6 +199,112 @@ export const cancelPledge = async (req, res) => {
   }
 };
 
+// =====================================================
+// ADD THIS to pledgeController.js AFTER the cancelPledge export
+// =====================================================
+
+export const updatePledge = async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    const { groupId, pledgeId } = req.params;
+    const { amount, fulfillmentDate, reminderFrequency, isAnonymous, currency, originalAmount, notes } = req.body;
+    const userId = req.user.id;
+
+    if (!amount || parseFloat(amount) <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid pledge amount' });
+    }
+
+    // Check if user owns this pledge
+    const pledgeCheck = await client.query(
+      'SELECT * FROM pledges WHERE id = $1 AND group_id = $2 AND user_id = $3',
+      [pledgeId, groupId, userId]
+    );
+
+    if (pledgeCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Pledge not found or access denied' });
+    }
+
+    const oldPledge = pledgeCheck.rows[0];
+    if (oldPledge.status === 'paid') {
+      return res.status(400).json({ success: false, message: 'Cannot revise a paid pledge' });
+    }
+
+    await client.query('BEGIN');
+
+    // Update pledge
+    const result = await client.query(
+      `UPDATE pledges SET 
+        amount = $1,
+        fulfillment_date = $2,
+        reminder_frequency = $3,
+        is_anonymous = $4,
+        pledge_currency = $5,
+        original_amount = $6,
+        notes = $7
+       WHERE id = $8 AND group_id = $9
+       RETURNING *`,
+      [
+        parseFloat(amount),
+        fulfillmentDate || null,
+        reminderFrequency || 'none',
+        isAnonymous || false,
+        currency || 'USD',
+        originalAmount ? parseFloat(originalAmount) : parseFloat(amount),
+        notes || null,
+        pledgeId,
+        groupId
+      ]
+    );
+
+    // Update group's pledged_amount
+    await client.query(
+      `UPDATE groups SET pledged_amount = (
+        SELECT COALESCE(SUM(amount), 0) FROM pledges WHERE group_id = $1
+      ) WHERE id = $1`,
+      [groupId]
+    );
+
+    // Update reminders
+    if (reminderFrequency && reminderFrequency !== 'none') {
+      const nextReminderDate = calculateNextReminderDate(reminderFrequency);
+      const existingReminder = await client.query(
+        'SELECT id FROM reminders WHERE pledge_id = $1', [pledgeId]
+      );
+      if (existingReminder.rows.length > 0) {
+        await client.query(
+          `UPDATE reminders SET reminder_type = $1, next_reminder_date = $2, status = 'active' WHERE pledge_id = $3`,
+          [reminderFrequency, nextReminderDate, pledgeId]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO reminders (pledge_id, user_id, group_id, reminder_type, next_reminder_date, status)
+           VALUES ($1, $2, $3, $4, $5, 'active')`,
+          [pledgeId, userId, groupId, reminderFrequency, nextReminderDate]
+        );
+      }
+    } else {
+      await client.query(
+        `UPDATE reminders SET status = 'inactive' WHERE pledge_id = $1`, [pledgeId]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      data: { pledge: result.rows[0] },
+      message: 'Pledge revised successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Update pledge error:', error);
+    res.status(500).json({ success: false, message: 'Error updating pledge' });
+  } finally {
+    client.release();
+  }
+};
+
 export const markPledgeAsPaid = async (req, res) => {
   const client = await pool.connect();
   

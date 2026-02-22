@@ -1,6 +1,8 @@
 /**
  * messagesRoutes.js
- * Destination: src/routes/messagesRoutes.js  (backend)
+ * Destination: src/routes/messagesRoutes.js (backend)
+ * Actual messages table columns:
+ *   id, group_id, sender_id, recipient_id, content, message_type, is_read, created_at
  */
 
 import express from 'express';
@@ -15,7 +17,6 @@ const pool   = new Pool({
 });
 
 // ── GET /api/messages/groups ──────────────────────────────────────
-// Groups the user belongs to + latest message preview + unread count
 router.get('/groups', auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -43,8 +44,8 @@ router.get('/groups', auth, async (req, res) => {
           SELECT COUNT(*)::int
           FROM messages m
           WHERE m.group_id = g.id
-            AND m.user_id != $1
-            AND m.created_at > NOW() - INTERVAL '24 hours'
+            AND m.sender_id != $1
+            AND m.is_read = false
         ) AS unread_count
       FROM groups g
       INNER JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $1
@@ -59,7 +60,6 @@ router.get('/groups', auth, async (req, res) => {
 });
 
 // ── GET /api/messages/:groupId ────────────────────────────────────
-// All messages in a group with sender info
 router.get('/:groupId', auth, async (req, res) => {
   try {
     const userId  = req.user.id;
@@ -75,17 +75,11 @@ router.get('/:groupId', auth, async (req, res) => {
 
     const result = await pool.query(`
       SELECT
-        m.id,
-        m.group_id,
-        m.user_id,
-        m.content,
-        m.created_at,
-        u.first_name,
-        u.last_name,
-        u.avatar_url,
-        u.avatar_type
+        m.id, m.group_id, m.sender_id, m.recipient_id,
+        m.content, m.message_type, m.is_read, m.created_at,
+        u.first_name, u.last_name, u.avatar_url, u.avatar_type
       FROM messages m
-      JOIN users u ON u.id = m.user_id
+      JOIN users u ON u.id = m.sender_id
       WHERE m.group_id = $1
       ORDER BY m.created_at DESC
       LIMIT 100
@@ -99,24 +93,17 @@ router.get('/:groupId', auth, async (req, res) => {
 });
 
 // ── GET /api/messages/:groupId/:userId ────────────────────────────
-// All messages in a group (thread context)
 router.get('/:groupId/:userId', auth, async (req, res) => {
   try {
     const { groupId } = req.params;
 
     const result = await pool.query(`
       SELECT
-        m.id,
-        m.group_id,
-        m.user_id,
-        m.content,
-        m.created_at,
-        u.first_name,
-        u.last_name,
-        u.avatar_url,
-        u.avatar_type
+        m.id, m.group_id, m.sender_id, m.recipient_id,
+        m.content, m.message_type, m.is_read, m.created_at,
+        u.first_name, u.last_name, u.avatar_url, u.avatar_type
       FROM messages m
-      JOIN users u ON u.id = m.user_id
+      JOIN users u ON u.id = m.sender_id
       WHERE m.group_id = $1
       ORDER BY m.created_at ASC
       LIMIT 200
@@ -130,11 +117,10 @@ router.get('/:groupId/:userId', auth, async (req, res) => {
 });
 
 // ── POST /api/messages ────────────────────────────────────────────
-// Send a message to a group
 router.post('/', auth, async (req, res) => {
   try {
-    const userId              = req.user.id;
-    const { group_id, content } = req.body;
+    const senderId              = req.user.id;
+    const { group_id, content, recipient_id } = req.body;
 
     if (!group_id || !content?.trim()) {
       return res.status(400).json({ message: 'group_id and content are required' });
@@ -142,17 +128,17 @@ router.post('/', auth, async (req, res) => {
 
     const memberCheck = await pool.query(
       'SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2',
-      [group_id, userId]
+      [group_id, senderId]
     );
     if (memberCheck.rows.length === 0) {
       return res.status(403).json({ message: 'Not a member of this group' });
     }
 
     const result = await pool.query(
-      `INSERT INTO messages (group_id, user_id, content, created_at)
-       VALUES ($1, $2, $3, NOW())
-       RETURNING id, group_id, user_id, content, created_at`,
-      [group_id, userId, content.trim()]
+      `INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at)
+       VALUES ($1, $2, $3, $4, 'text', false, NOW())
+       RETURNING id, group_id, sender_id, recipient_id, content, is_read, created_at`,
+      [group_id, senderId, recipient_id || null, content.trim()]
     );
 
     res.status(201).json({ data: result.rows[0] });

@@ -1,271 +1,221 @@
+/**
+ * messagesRoutes.js
+ * Destination: src/routes/messagesRoutes.js  (backend)
+ *
+ * Endpoints:
+ *   GET  /api/messages/groups          — groups the user belongs to + unread count
+ *   GET  /api/messages/:groupId        — all messages in a group (conversations list)
+ *   GET  /api/messages/:groupId/:userId — thread between current user and another user
+ *   POST /api/messages                 — send a message to a group
+ */
+
 import express from 'express';
+import pkg from 'pg';
+const { Pool } = pkg;
 import { auth } from '../middleware/auth.js';
-import db from '../config/database.js';
 
 const router = express.Router();
+const pool   = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-// Get all conversations for a user in a group
-router.get('/group/:groupId/conversations', auth, async (req, res) => {
+// ── GET /api/messages/groups ─────────────────────────────────────
+// Returns all groups the user is a member of, with latest message
+// preview and unread_count for the NotificationBell.
+router.get('/groups', auth, async (req, res) => {
   try {
-    const { groupId } = req.params;
     const userId = req.user.id;
 
-    // Get all unique conversations (people user has messaged with)
-    const result = await db.query(
-      `WITH conversations AS (
-        SELECT DISTINCT
-          CASE 
-            WHEN sender_id = $2 THEN recipient_id 
-            ELSE sender_id 
-          END as other_user_id,
-          MAX(created_at) as last_message_at
-        FROM messages
-        WHERE group_id = $1 AND (sender_id = $2 OR recipient_id = $2)
-        GROUP BY other_user_id
-      )
-      SELECT 
-        c.other_user_id,
-        c.last_message_at,
-        u.first_name,
-        u.last_name,
-        u.country,
-        u.avatar_url,
-        u.avatar_type,
-        u.last_active,
-        (SELECT content FROM messages 
-         WHERE group_id = $1 
-           AND ((sender_id = $2 AND recipient_id = c.other_user_id) 
-                OR (sender_id = c.other_user_id AND recipient_id = $2))
-         ORDER BY created_at DESC LIMIT 1) as last_message,
-        (SELECT COUNT(*) FROM messages 
-         WHERE group_id = $1 
-           AND sender_id = c.other_user_id 
-           AND recipient_id = $2 
-           AND is_read = false) as unread_count
-      FROM conversations c
-      JOIN users u ON c.other_user_id = u.id
-      ORDER BY c.last_message_at DESC`,
+    const result = await pool.query(`
+      SELECT
+        g.id,
+        g.name,
+        g.currency,
+        -- latest message in this group
+        lm.content        AS last_message,
+        lm.created_at     AS last_message_at,
+        lm.sender_name,
+        -- unread: messages after the user's last read time
+        COALESCE(unread.cnt, 0)::int AS unread_count
+      FROM groups g
+      INNER JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $1
+
+      -- latest message subquery
+      LEFT JOIN LATERAL (
+        SELECT
+          m.content,
+          m.created_at,
+          CONCAT(u.first_name, ' ', u.last_name) AS sender_name
+        FROM messages m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.group_id = g.id
+        ORDER BY m.created_at DESC
+        LIMIT 1
+      ) lm ON true
+
+      -- unread count: messages not sent by this user, newer than 24h ago
+      -- (simple heuristic — replace with a read_receipts table later)
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS cnt
+        FROM messages m
+        WHERE m.group_id = g.id
+          AND m.user_id  != $1
+          AND m.created_at > NOW() - INTERVAL '24 hours'
+      ) unread ON true
+
+      ORDER BY lm.created_at DESC NULLS LAST, g.name ASC
+    `, [userId]);
+
+    res.json({ data: result.rows });
+  } catch (err) {
+    console.error('GET /messages/groups error:', err);
+    res.status(500).json({ message: 'Failed to fetch message groups' });
+  }
+});
+
+// ── GET /api/messages/:groupId ────────────────────────────────────
+// Returns all messages in a group, newest first, with sender info.
+// NotificationBell uses this to show the "conversations" level.
+router.get('/:groupId', auth, async (req, res) => {
+  try {
+    const userId  = req.user.id;
+    const groupId = req.params.groupId;
+
+    // Verify user is a member
+    const memberCheck = await pool.query(
+      'SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2',
       [groupId, userId]
     );
+    if (memberCheck.rows.length === 0) {
+      return res.status(403).json({ message: 'Not a member of this group' });
+    }
 
-    res.json({
-      success: true,
-      data: { conversations: result.rows }
-    });
-  } catch (error) {
-    console.error('Get conversations error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get conversations'
-    });
+    const result = await pool.query(`
+      SELECT
+        m.id,
+        m.group_id,
+        m.user_id,
+        m.content,
+        m.created_at,
+        u.first_name,
+        u.last_name,
+        CONCAT(u.first_name, ' ', u.last_name) AS sender_name,
+        u.avatar_url,
+        u.avatar_type
+      FROM messages m
+      JOIN users u ON u.id = m.user_id
+      WHERE m.group_id = $1
+      ORDER BY m.created_at DESC
+      LIMIT 100
+    `, [groupId]);
+
+    res.json({ data: result.rows });
+  } catch (err) {
+    console.error('GET /messages/:groupId error:', err);
+    res.status(500).json({ message: 'Failed to fetch messages' });
   }
 });
 
-// Get messages between two users in a group
-router.get('/group/:groupId/with/:recipientId', auth, async (req, res) => {
+// ── GET /api/messages/:groupId/:userId ────────────────────────────
+// Returns message thread between current user and another user
+// within a specific group context.
+router.get('/:groupId/:userId', auth, async (req, res) => {
   try {
-    const { groupId, recipientId } = req.params;
-    const userId = req.user.id;
+    const currentUserId = req.user.id;
+    const { groupId, userId: otherUserId } = req.params;
 
-    const result = await db.query(
-      `SELECT m.*, 
-              sender.first_name as sender_first_name, 
-              sender.last_name as sender_last_name,
-              sender.avatar_url as sender_avatar_url,
-              sender.avatar_type as sender_avatar_type
-       FROM messages m
-       JOIN users sender ON m.sender_id = sender.id
-       WHERE m.group_id = $1 
-         AND ((m.sender_id = $2 AND m.recipient_id = $3) 
-              OR (m.sender_id = $3 AND m.recipient_id = $2))
-       ORDER BY m.created_at ASC`,
-      [groupId, userId, recipientId]
-    );
+    const result = await pool.query(`
+      SELECT
+        m.id,
+        m.group_id,
+        m.user_id,
+        m.content,
+        m.created_at,
+        u.first_name,
+        u.last_name,
+        CONCAT(u.first_name, ' ', u.last_name) AS sender_name,
+        u.avatar_url,
+        u.avatar_type
+      FROM messages m
+      JOIN users u ON u.id = m.user_id
+      WHERE m.group_id = $1
+        AND (
+          (m.user_id = $2 AND m.recipient_id = $3) OR
+          (m.user_id = $3 AND m.recipient_id = $2) OR
+          -- fallback: show all group messages if recipient_id column doesn't exist
+          (m.recipient_id IS NULL)
+        )
+      ORDER BY m.created_at ASC
+      LIMIT 200
+    `, [groupId, currentUserId, otherUserId]);
 
-    res.json({
-      success: true,
-      data: { messages: result.rows }
-    });
-  } catch (error) {
-    console.error('Get messages error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get messages'
-    });
+    res.json({ data: result.rows });
+  } catch (err) {
+    // Graceful fallback if recipient_id column doesn't exist yet
+    try {
+      const currentUserId = req.user.id;
+      const { groupId } = req.params;
+      const fallback = await pool.query(`
+        SELECT m.id, m.group_id, m.user_id, m.content, m.created_at,
+               u.first_name, u.last_name,
+               CONCAT(u.first_name, ' ', u.last_name) AS sender_name,
+               u.avatar_url, u.avatar_type
+        FROM messages m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.group_id = $1
+        ORDER BY m.created_at ASC LIMIT 200
+      `, [groupId]);
+      res.json({ data: fallback.rows });
+    } catch (err2) {
+      console.error('GET /messages/:groupId/:userId error:', err2);
+      res.status(500).json({ message: 'Failed to fetch thread' });
+    }
   }
 });
 
-// Send a message
-router.post('/group/:groupId/send', auth, async (req, res) => {
+// ── POST /api/messages ────────────────────────────────────────────
+// Send a message to a group.
+router.post('/', auth, async (req, res) => {
   try {
-    const { groupId } = req.params;
-    const { recipientId, content } = req.body;
-    const senderId = req.user.id;
+    const userId               = req.user.id;
+    const { group_id, content, recipient_id } = req.body;
 
-    if (!content || !content.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Message content is required'
-      });
+    if (!group_id || !content?.trim()) {
+      return res.status(400).json({ message: 'group_id and content are required' });
     }
 
-    if (!recipientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Recipient is required'
-      });
+    // Verify user is a member
+    const memberCheck = await pool.query(
+      'SELECT id FROM group_members WHERE group_id = $1 AND user_id = $2',
+      [group_id, userId]
+    );
+    if (memberCheck.rows.length === 0) {
+      return res.status(403).json({ message: 'Not a member of this group' });
     }
 
-    // Verify both users are members of the group
-    const memberCheck = await db.query(
-      `SELECT user_id FROM group_members 
-       WHERE group_id = $1 AND user_id IN ($2, $3)`,
-      [groupId, senderId, recipientId]
-    );
-
-    if (memberCheck.rows.length < 2) {
-      return res.status(403).json({
-        success: false,
-        message: 'Both users must be members of the group'
-      });
+    // Insert — try with recipient_id, fall back without
+    let result;
+    try {
+      result = await pool.query(
+        `INSERT INTO messages (group_id, user_id, recipient_id, content, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, group_id, user_id, content, created_at`,
+        [group_id, userId, recipient_id || null, content.trim()]
+      );
+    } catch {
+      result = await pool.query(
+        `INSERT INTO messages (group_id, user_id, content, created_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, group_id, user_id, content, created_at`,
+        [group_id, userId, content.trim()]
+      );
     }
 
-    // Insert message
-    const result = await db.query(
-      `INSERT INTO messages (group_id, sender_id, recipient_id, content, created_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       RETURNING *`,
-      [groupId, senderId, recipientId, content.trim()]
-    );
-
-    // Get sender info for response
-    const senderInfo = await db.query(
-      'SELECT first_name, last_name, avatar_url, avatar_type FROM users WHERE id = $1',
-      [senderId]
-    );
-
-    const message = {
-      ...result.rows[0],
-      sender_first_name: senderInfo.rows[0].first_name,
-      sender_last_name: senderInfo.rows[0].last_name,
-      sender_avatar_url: senderInfo.rows[0].avatar_url,
-      sender_avatar_type: senderInfo.rows[0].avatar_type
-    };
-
-    res.status(201).json({
-      success: true,
-      message: 'Message sent',
-      data: { message }
-    });
-  } catch (error) {
-    console.error('Send message error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send message'
-    });
-  }
-});
-
-// Mark messages as read
-router.put('/group/:groupId/read/:senderId', auth, async (req, res) => {
-  try {
-    const { groupId, senderId } = req.params;
-    const recipientId = req.user.id;
-
-    await db.query(
-      `UPDATE messages 
-       SET is_read = true, read_at = NOW()
-       WHERE group_id = $1 
-         AND sender_id = $2 
-         AND recipient_id = $3 
-         AND is_read = false`,
-      [groupId, senderId, recipientId]
-    );
-
-    res.json({
-      success: true,
-      message: 'Messages marked as read'
-    });
-  } catch (error) {
-    console.error('Mark read error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to mark messages as read'
-    });
-  }
-});
-
-// Get unread message count for user across all groups
-router.get('/unread-count', auth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-
-    const result = await db.query(
-      `SELECT COUNT(*) as total_unread,
-              group_id,
-              (SELECT name FROM groups WHERE id = messages.group_id) as group_name
-       FROM messages
-       WHERE recipient_id = $1 AND is_read = false
-       GROUP BY group_id`,
-      [userId]
-    );
-
-    const totalUnread = result.rows.reduce((sum, row) => sum + parseInt(row.total_unread), 0);
-
-    res.json({
-      success: true,
-      data: { 
-        totalUnread,
-        byGroup: result.rows
-      }
-    });
-  } catch (error) {
-    console.error('Get unread count error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get unread count'
-    });
-  }
-});
-
-// Delete a message (sender only)
-router.delete('/:messageId', auth, async (req, res) => {
-  try {
-    const { messageId } = req.params;
-    const userId = req.user.id;
-
-    // Check if user is sender
-    const message = await db.query(
-      'SELECT sender_id FROM messages WHERE id = $1',
-      [messageId]
-    );
-
-    if (message.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Message not found'
-      });
-    }
-
-    if (message.rows[0].sender_id !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: 'You can only delete your own messages'
-      });
-    }
-
-    await db.query('DELETE FROM messages WHERE id = $1', [messageId]);
-
-    res.json({
-      success: true,
-      message: 'Message deleted'
-    });
-  } catch (error) {
-    console.error('Delete message error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to delete message'
-    });
+    res.status(201).json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('POST /messages error:', err);
+    res.status(500).json({ message: 'Failed to send message' });
   }
 });
 

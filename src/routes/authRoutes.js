@@ -6,7 +6,9 @@ import {
   getMe,
   updateProfile,
   changePassword,
-  getUserProfile
+  getUserProfile,
+  sendOtp,
+  verifyOtp
 } from '../controllers/authController.js';
 
 const router = express.Router();
@@ -20,5 +22,8 @@ router.get('/me', auth, getMe);
 router.put('/profile', auth, updateProfile);
 router.put('/password', auth, changePassword);
 router.get('/user/:userId', auth, getUserProfile);
+
+router.post('/send-otp', sendOtp);
+router.post('/verify-otp', verifyOtp);
 
 export default router;

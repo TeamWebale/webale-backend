@@ -191,3 +191,4 @@ console.log('  Resend imported:', content.includes("from 'resend'"));
 console.log('  sendOtp exported:', content.includes('export const sendOtp'));
 console.log('  verifyOtp exported:', content.includes('export const verifyOtp'));
 console.log('  register sends OTP:', content.includes('requiresVerification: true'));
+"// OTP routes added" 

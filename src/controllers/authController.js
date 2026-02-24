@@ -1,6 +1,8 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from '../config/database.js';
+import { Resend } from 'resend';
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Register new user
 export const register = async (req, res) => {
@@ -372,5 +374,59 @@ export const getUserProfile = async (req, res) => {
       success: false,
       message: 'Failed to get user profile'
     });
+  }
+};
+
+// ── Verify OTP ────────────────────────────────────────────────────
+export const verifyOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp)
+      return res.status(400).json({ success: false, message: 'Email and OTP required' });
+
+    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0)
+      return res.status(404).json({ success: false, message: 'User not found' });
+
+    const user = result.rows[0];
+
+    if (!user.otp_code || user.otp_code !== otp)
+      return res.status(400).json({ success: false, message: 'Invalid verification code' });
+
+    if (new Date() > new Date(user.otp_expires_at))
+      return res.status(400).json({ success: false, message: 'Code expired — request a new one' });
+
+    await db.query(
+      'UPDATE users SET is_verified = true, otp_code = NULL, otp_expires_at = NULL WHERE id = $1',
+      [user.id]
+    );
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully',
+      data: {
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          country: user.country,
+          avatar_url: user.avatar_url,
+          avatar_type: user.avatar_type,
+          created_at: user.created_at,
+          is_verified: true,
+        }
+      }
+    });
+  } catch (error) {
+    console.error('verifyOtp error:', error);
+    res.status(500).json({ success: false, message: 'Verification failed' });
   }
 };

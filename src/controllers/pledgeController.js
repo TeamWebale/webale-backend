@@ -12,14 +12,15 @@ export const createPledge = async (req, res) => {
       reminderFrequency, 
       isAnonymous,
       currency,
-      originalAmount 
+      originalAmount,
+      donorName
     } = req.body;
     const userId = req.user.id;
 
     if (!amount || parseFloat(amount) <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid pledge amount'
+        message: 'Please enter the amount you wish to pledge'
       });
     }
 
@@ -44,9 +45,9 @@ export const createPledge = async (req, res) => {
       `INSERT INTO pledges (
         group_id, user_id, amount, status, recorded_by,
         fulfillment_date, reminder_frequency, is_anonymous,
-        pledge_currency, original_amount
+        pledge_currency, original_amount, donor_name
       )
-       VALUES ($1, $2, $3, 'pledged', $2, $4, $5, $6, $7, $8)
+       VALUES ($1, $2, $3, 'pledged', $2, $4, $5, $6, $7, $8, $9)
        
        RETURNING *`,
       [
@@ -57,7 +58,8 @@ export const createPledge = async (req, res) => {
         reminderFrequency || 'none',
         isAnonymous || false,
         currency || 'USD',
-        originalAmount ? parseFloat(originalAmount) : parseFloat(amount)
+        originalAmount ? parseFloat(originalAmount) : parseFloat(amount),
+        donorName || null
       ]
     );
 

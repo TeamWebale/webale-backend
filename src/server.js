@@ -20,6 +20,10 @@ import paymentRoutes from './routes/paymentRoutes.js';
 import invitationsRoutes from './routes/invitationsRoutes.js';
 import passwordResetRoutes from './routes/passwordResetRoutes.js';
 import platformAdminRoutes from './routes/platformAdminRoutes.js';
+import { initSentry, sentryErrorHandler } from './sentrySetup.js';
+
+// Init Sentry before anything else
+initSentry();
 
 dotenv.config();
 
@@ -89,6 +93,9 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/invitations', invitationsRoutes);
 app.use('/api/auth', passwordResetRoutes);
 app.use('/api/platform-admin', platformAdminRoutes);
+
+// Sentry error handler — must be last middleware
+app.use(sentryErrorHandler());
 
 // ==========================================
 // START SERVER

@@ -19,6 +19,7 @@ import notificationRoutes from './routes/notificationRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import invitationsRoutes from './routes/invitationsRoutes.js';
 import passwordResetRoutes from './routes/passwordResetRoutes.js';
+import platformAdminRoutes from './routes/platformAdminRoutes.js';
 
 dotenv.config();
 
@@ -87,6 +88,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/invitations', invitationsRoutes);
 app.use('/api/auth', passwordResetRoutes);
+app.use('/api/platform-admin', platformAdminRoutes);
 
 // ==========================================
 // START SERVER

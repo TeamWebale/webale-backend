@@ -106,6 +106,24 @@ router.post('/:token/accept', async (req, res) => {
 
     await db.query(`UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [invitation.id]);
 
+    // Auto welcome DM from group admin
+    try {
+      const groupId = invitation.group_id;
+      const newMemberId = userId;
+      const [groupRes, adminRes, memberRes] = await Promise.all([
+        db.query('SELECT name FROM groups WHERE id = $1', [groupId]),
+        db.query('SELECT u.id, u.first_name, u.last_name FROM users u JOIN group_members gm ON gm.user_id = u.id WHERE gm.group_id = $1 AND gm.role = $2 ORDER BY gm.joined_at ASC LIMIT 1', [groupId, 'admin']),
+        db.query('SELECT first_name FROM users WHERE id = $1', [newMemberId]),
+      ]);
+      const groupName = groupRes.rows[0]?.name || 'our group';
+      const admin = adminRes.rows[0];
+      const memberFirst = memberRes.rows[0]?.first_name || 'there';
+      if (admin) {
+        const msg = 'Welcome, ' + memberFirst + '! 🎉\n\nWe are so glad you have joined "' + groupName + '". Your presence means a lot to us and we truly appreciate you being part of this journey.\n\nFeel free to explore the group, make a pledge when you are ready, and do not hesitate to reach out if you have any questions. Together we will make this happen! 💪\n\nWarm regards,\n' + admin.first_name + ' ' + admin.last_name;
+        await db.query('INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())', [groupId, admin.id, newMemberId, msg, 'text']);
+      }
+    } catch (dmErr) { console.error('Welcome DM error:', dmErr.message); }
+
     res.json({ success: true, message: 'Successfully joined the group!', data: { groupId: invitation.group_id } });
   } catch (error) {
     console.error('Accept invitation error:', error);

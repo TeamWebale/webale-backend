@@ -25,12 +25,18 @@ router.get('/:token/validate', async (req, res) => {
 
     const invitation = result.rows[0];
 
-    if (invitation.status === 'accepted') {
-      return res.status(400).json({ success: false, message: 'This invitation has already been accepted' });
-    }
-
-    if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
-      return res.status(400).json({ success: false, message: 'This invitation has expired' });
+    // Check max_uses: if set, count how many times this token has been used
+    if (invitation.max_uses) {
+      const usageResult = await db.query(
+        `SELECT COUNT(*) as use_count FROM group_members gm
+         JOIN invitations i ON i.group_id = gm.group_id
+         WHERE i.token = $1 AND gm.joined_at >= i.created_at`,
+        [token]
+      );
+      const useCount = parseInt(usageResult.rows[0].use_count, 10);
+      if (useCount >= invitation.max_uses) {
+        return res.status(400).json({ success: false, message: 'This invitation link has reached its maximum number of uses' });
+      }
     }
 
     res.json({
@@ -81,12 +87,18 @@ router.post('/:token/accept', async (req, res) => {
 
     const invitation = invResult.rows[0];
 
-    if (invitation.status === 'accepted') {
-      return res.status(400).json({ success: false, message: 'This invitation has already been accepted' });
-    }
-
-    if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
-      return res.status(400).json({ success: false, message: 'This invitation has expired' });
+    // Enforce max_uses if set
+    if (invitation.max_uses) {
+      const usageResult = await db.query(
+        `SELECT COUNT(*) as use_count FROM group_members gm
+         JOIN invitations i ON i.group_id = gm.group_id
+         WHERE i.token = $1 AND gm.joined_at >= i.created_at`,
+        [token]
+      );
+      const useCount = parseInt(usageResult.rows[0].use_count, 10);
+      if (useCount >= invitation.max_uses) {
+        return res.status(400).json({ success: false, message: 'This invitation link has reached its maximum number of uses' });
+      }
     }
 
     const memberCheck = await db.query(
@@ -95,7 +107,6 @@ router.post('/:token/accept', async (req, res) => {
     );
 
     if (memberCheck.rows.length > 0) {
-      await db.query(`UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [invitation.id]);
       return res.json({ success: true, message: 'You are already a member of this group', data: { groupId: invitation.group_id } });
     }
 
@@ -104,7 +115,20 @@ router.post('/:token/accept', async (req, res) => {
       [invitation.group_id, userId]
     );
 
-    await db.query(`UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [invitation.id]);
+    // Only mark invitation as 'accepted' (closed) if max_uses is reached
+    if (invitation.max_uses) {
+      const postInsertCount = await db.query(
+        `SELECT COUNT(*) as use_count FROM group_members gm
+         JOIN invitations i ON i.group_id = gm.group_id
+         WHERE i.token = $1 AND gm.joined_at >= i.created_at`,
+        [token]
+      );
+      const currentCount = parseInt(postInsertCount.rows[0].use_count, 10);
+      if (currentCount >= invitation.max_uses) {
+        await db.query(`UPDATE invitations SET status = 'accepted', accepted_at = NOW() WHERE id = $1`, [invitation.id]);
+      }
+    }
+    // If no max_uses set (unlimited), invitation stays 'pending' and reusable
 
     // Auto welcome DM from group admin
     try {

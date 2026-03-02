@@ -4,7 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 // Create a new group
 export const createGroup = async (req, res) => {
   try {
-    const { name, description, goalAmount, deadline, currency, category, isPublic, templateType } = req.body;
+    const { name, description, goalAmount, goal_amount, deadline, currency, category, isPublic, templateType } = req.body;
+    const finalGoalAmount = goalAmount ?? goal_amount ?? 0;
     const userId = req.user.id;
 
     if (!name) {
@@ -19,7 +20,7 @@ export const createGroup = async (req, res) => {
       `INSERT INTO groups (name, description, goal_amount, deadline, currency, category, is_public, template_type, created_by, created_at, current_amount, pledged_amount)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 0, 0)
        RETURNING *`,
-      [name, description || null, goalAmount || 0, deadline || null, currency || 'USD', category || null, isPublic !== false, templateType || null, userId]
+      [name, description || null, finalGoalAmount, deadline || null, currency || 'USD', category || null, isPublic !== false, templateType || null, userId]
     );
 
     const group = result.rows[0];
@@ -118,7 +119,8 @@ export const getGroupById = async (req, res) => {
 export const updateGroup = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, goalAmount, deadline } = req.body;
+    const { name, description, goalAmount, goal_amount, deadline } = req.body;
+    const finalGoalAmount = goalAmount ?? goal_amount;
     const userId = req.user.id;
 
     // Check if user is admin
@@ -143,7 +145,7 @@ export const updateGroup = async (req, res) => {
            updated_at = NOW()
        WHERE id = $5
        RETURNING *`,
-      [name, description, goalAmount, deadline || null, id]
+      [name, description, finalGoalAmount, deadline || null, id]
     );
 
     res.json({

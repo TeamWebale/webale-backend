@@ -12,6 +12,7 @@ export const createPledge = async (req, res) => {
       reminderFrequency, 
       isAnonymous,
       currency,
+      pledge_currency,
       originalAmount,
       donorName
     } = req.body;
@@ -57,7 +58,7 @@ export const createPledge = async (req, res) => {
         fulfillmentDate || null,
         reminderFrequency || 'none',
         isAnonymous || false,
-        currency || 'USD',
+        pledge_currency || currency || 'USD',
         originalAmount ? parseFloat(originalAmount) : parseFloat(amount),
         donorName || null
       ]
@@ -210,7 +211,7 @@ export const updatePledge = async (req, res) => {
   
   try {
     const { groupId, pledgeId } = req.params;
-    const { amount, fulfillmentDate, reminderFrequency, isAnonymous, currency, originalAmount, notes } = req.body;
+    const { amount, fulfillmentDate, reminderFrequency, isAnonymous, currency, pledge_currency, originalAmount, notes } = req.body;
     const userId = req.user.id;
 
     if (!amount || parseFloat(amount) <= 0) {
@@ -251,7 +252,7 @@ export const updatePledge = async (req, res) => {
         fulfillmentDate || null,
         reminderFrequency || 'none',
         isAnonymous || false,
-        currency || 'USD',
+        pledge_currency || currency || 'USD',
         originalAmount ? parseFloat(originalAmount) : parseFloat(amount),
         notes || null,
         pledgeId,

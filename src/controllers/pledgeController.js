@@ -120,6 +120,31 @@ export const createPledge = async (req, res) => {
     // Check for milestones
     await checkMilestones(client, groupId, 'pledged');
 
+    // Auto-DM: admin sends thank-you note to the pledging member
+    try {
+      const adminResult = await client.query(
+        `SELECT u.id, u.first_name, u.last_name FROM group_members gm
+         JOIN users u ON u.id = gm.user_id
+         WHERE gm.group_id = $1 AND gm.role = 'admin' LIMIT 1`,
+        [groupId]
+      );
+      const memberResult = await client.query(
+        'SELECT first_name, last_name FROM users WHERE id = $1',
+        [userId]
+      );
+      if (adminResult.rows.length > 0 && memberResult.rows.length > 0) {
+        const admin = adminResult.rows[0];
+        const member = memberResult.rows[0];
+        const groupResult = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+        const groupName = groupResult.rows[0]?.name || 'our group';
+        const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nThank you for your generous pledge to "${groupName}"! 🙏\n\nWe greatly appreciate your commitment and support. Your participation makes a real difference and brings us closer to our goal.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+        await client.query(
+          'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
+          [groupId, admin.id, userId, thankYouMsg, 'text']
+        );
+      }
+    } catch (dmErr) { console.error('Pledge thank-you DM error:', dmErr.message); }
+
     await client.query('COMMIT');
 
     res.json({
@@ -376,6 +401,32 @@ export const markPledgeAsPaid = async (req, res) => {
     // Check for milestones
     await checkMilestones(client, groupId, 'contributed');
 
+    // Auto-DM: admin sends thank-you note to the contributing member
+    try {
+      const pledgeOwner = pledgeInfo.rows[0].user_id;
+      const adminResult = await client.query(
+        `SELECT u.id, u.first_name, u.last_name FROM group_members gm
+         JOIN users u ON u.id = gm.user_id
+         WHERE gm.group_id = $1 AND gm.role = 'admin' LIMIT 1`,
+        [groupId]
+      );
+      const memberResult = await client.query(
+        'SELECT first_name, last_name FROM users WHERE id = $1',
+        [pledgeOwner]
+      );
+      if (adminResult.rows.length > 0 && memberResult.rows.length > 0) {
+        const admin = adminResult.rows[0];
+        const member = memberResult.rows[0];
+        const groupResult = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+        const groupName = groupResult.rows[0]?.name || 'our group';
+        const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe greatly appreciate your contribution to "${groupName}"! 🎉\n\nYour generosity and follow-through mean the world to us. Every contribution brings us closer to our goal and makes a lasting impact.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+        await client.query(
+          'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
+          [groupId, admin.id, pledgeOwner, thankYouMsg, 'text']
+        );
+      }
+    } catch (dmErr) { console.error('Contribution thank-you DM error:', dmErr.message); }
+
     await client.query('COMMIT');
 
     res.json({
@@ -437,6 +488,31 @@ export const addManualContribution = async (req, res) => {
 
     // Check for milestones
     await checkMilestones(client, groupId, 'contributed');
+
+    // Auto-DM: admin sends thank-you note for manual contribution (skip anonymous)
+    if (!isAnonymous) {
+      try {
+        const adminInfo = await client.query(
+          'SELECT first_name, last_name FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        const memberResult = await client.query(
+          'SELECT first_name, last_name FROM users WHERE id = $1',
+          [actualUserId]
+        );
+        if (adminInfo.rows.length > 0 && memberResult.rows.length > 0) {
+          const admin = adminInfo.rows[0];
+          const member = memberResult.rows[0];
+          const groupResult = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+          const groupName = groupResult.rows[0]?.name || 'our group';
+          const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe greatly appreciate your contribution to "${groupName}"! 🎉\n\nYour generosity and support mean the world to us. Every contribution brings us closer to our goal and makes a lasting impact.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+          await client.query(
+            'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
+            [groupId, req.user.id, actualUserId, thankYouMsg, 'text']
+          );
+        }
+      } catch (dmErr) { console.error('Manual contribution thank-you DM error:', dmErr.message); }
+    }
 
     await client.query('COMMIT');
 

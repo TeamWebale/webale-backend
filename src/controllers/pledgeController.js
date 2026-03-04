@@ -135,9 +135,11 @@ export const createPledge = async (req, res) => {
       if (adminResult.rows.length > 0 && memberResult.rows.length > 0) {
         const admin = adminResult.rows[0];
         const member = memberResult.rows[0];
-        const groupResult = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+        const groupResult = await client.query('SELECT name, currency FROM groups WHERE id = $1', [groupId]);
         const groupName = groupResult.rows[0]?.name || 'our group';
-        const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nThank you for your generous pledge to "${groupName}"! 🙏\n\nWe greatly appreciate your commitment and support. Your participation makes a real difference and brings us closer to our goal.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+        const displayCurrency = pledge_currency || currency || groupResult.rows[0]?.currency || 'USD';
+        const displayAmount = originalAmount ? parseFloat(originalAmount) : parseFloat(amount);
+        const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nThank you for your generous pledge of ${displayCurrency} ${displayAmount.toLocaleString()} to "${groupName}"! 🙏\n\nWe greatly appreciate your commitment and support. Your participation makes a real difference and brings us closer to our goal.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
         await client.query(
           'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
           [groupId, admin.id, userId, thankYouMsg, 'text']
@@ -208,6 +210,33 @@ export const cancelPledge = async (req, res) => {
     await logActivity(req.user.id, groupId, ACTIVITY_TYPES.PLEDGE_CANCELLED, {
       amount: parseFloat(pledge.amount),
     });
+
+    // Auto-DM: admin sends acknowledgement of pledge cancellation
+    try {
+      const adminResult = await client.query(
+        `SELECT u.id, u.first_name, u.last_name FROM group_members gm
+         JOIN users u ON u.id = gm.user_id
+         WHERE gm.group_id = $1 AND gm.role = 'admin' LIMIT 1`,
+        [groupId]
+      );
+      const memberResult = await client.query(
+        'SELECT first_name, last_name FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      if (adminResult.rows.length > 0 && memberResult.rows.length > 0) {
+        const admin = adminResult.rows[0];
+        const member = memberResult.rows[0];
+        const groupResult = await client.query('SELECT name, currency FROM groups WHERE id = $1', [groupId]);
+        const groupName = groupResult.rows[0]?.name || 'our group';
+        const displayCurrency = pledge.pledge_currency || groupResult.rows[0]?.currency || 'USD';
+        const displayAmount = pledge.original_amount ? parseFloat(pledge.original_amount) : parseFloat(pledge.amount);
+        const cancelMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe acknowledge your pledge cancellation of ${displayCurrency} ${displayAmount.toLocaleString()} in "${groupName}".\n\nWe understand circumstances change. Should you wish to contribute in the future, you are always welcome. Thank you for your consideration and have a nice day! 🙏\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+        await client.query(
+          'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
+          [groupId, admin.id, req.user.id, cancelMsg, 'text']
+        );
+      }
+    } catch (dmErr) { console.error('Pledge cancellation DM error:', dmErr.message); }
 
     await client.query('COMMIT');
 
@@ -417,9 +446,12 @@ export const markPledgeAsPaid = async (req, res) => {
       if (adminResult.rows.length > 0 && memberResult.rows.length > 0) {
         const admin = adminResult.rows[0];
         const member = memberResult.rows[0];
-        const groupResult = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+        const groupResult = await client.query('SELECT name, currency FROM groups WHERE id = $1', [groupId]);
         const groupName = groupResult.rows[0]?.name || 'our group';
-        const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe greatly appreciate your contribution to "${groupName}"! 🎉\n\nYour generosity and follow-through mean the world to us. Every contribution brings us closer to our goal and makes a lasting impact.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+        const pInfo = pledgeInfo.rows[0];
+        const displayCurrency = pInfo.pledge_currency || groupResult.rows[0]?.currency || 'USD';
+        const displayAmount = pInfo.original_amount ? parseFloat(pInfo.original_amount) : parseFloat(contributionAmount);
+        const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe greatly appreciate your contribution of ${displayCurrency} ${displayAmount.toLocaleString()} to "${groupName}"! 🎉\n\nYour pledge has been marked as fulfilled. Your generosity and follow-through mean the world to us. Every contribution brings us closer to our goal and makes a lasting impact.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
         await client.query(
           'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
           [groupId, admin.id, pledgeOwner, thankYouMsg, 'text']
@@ -503,9 +535,10 @@ export const addManualContribution = async (req, res) => {
         if (adminInfo.rows.length > 0 && memberResult.rows.length > 0) {
           const admin = adminInfo.rows[0];
           const member = memberResult.rows[0];
-          const groupResult = await client.query('SELECT name FROM groups WHERE id = $1', [groupId]);
+          const groupResult = await client.query('SELECT name, currency FROM groups WHERE id = $1', [groupId]);
           const groupName = groupResult.rows[0]?.name || 'our group';
-          const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe greatly appreciate your contribution to "${groupName}"! 🎉\n\nYour generosity and support mean the world to us. Every contribution brings us closer to our goal and makes a lasting impact.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+          const groupCurrency = groupResult.rows[0]?.currency || 'USD';
+          const thankYouMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe greatly appreciate your contribution of ${groupCurrency} ${parseFloat(amount).toLocaleString()} to "${groupName}"! 🎉\n\nYour generosity and support mean the world to us. Every contribution brings us closer to our goal and makes a lasting impact.\n\nThank you and have a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
           await client.query(
             'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
             [groupId, req.user.id, actualUserId, thankYouMsg, 'text']

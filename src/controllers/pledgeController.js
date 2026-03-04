@@ -342,9 +342,36 @@ export const updatePledge = async (req, res) => {
       }
     } else {
       await client.query(
-        `UPDATE reminders SET status = 'inactive' WHERE pledge_id = $1`, [pledgeId]
+        `Update reminders SET status = 'inactive' WHERE pledge_id = $1`, [pledgeId]
       );
     }
+
+    // Auto-DM: admin sends acknowledgement of pledge revision
+    try {
+      const adminResult = await client.query(
+        `SELECT u.id, u.first_name, u.last_name FROM group_members gm
+         JOIN users u ON u.id = gm.user_id
+         WHERE gm.group_id = $1 AND gm.role = 'admin' LIMIT 1`,
+        [groupId]
+      );
+      const memberResult = await client.query(
+        'SELECT first_name, last_name FROM users WHERE id = $1',
+        [userId]
+      );
+      if (adminResult.rows.length > 0 && memberResult.rows.length > 0) {
+        const admin = adminResult.rows[0];
+        const member = memberResult.rows[0];
+        const groupResult = await client.query('SELECT name, currency FROM groups WHERE id = $1', [groupId]);
+        const groupName = groupResult.rows[0]?.name || 'our group';
+        const displayCurrency = pledge_currency || currency || groupResult.rows[0]?.currency || 'USD';
+        const displayAmount = originalAmount ? parseFloat(originalAmount) : parseFloat(amount);
+        const reviseMsg = `Dear ${member.first_name} ${member.last_name},\n\nWe acknowledge your revised pledge of ${displayCurrency} ${displayAmount.toLocaleString()} in "${groupName}". 📝\n\nThank you for keeping your commitment updated. We appreciate your continued support and transparency.\n\nHave a nice day! 😊\n\nWarm regards,\n${admin.first_name} ${admin.last_name}`;
+        await client.query(
+          'INSERT INTO messages (group_id, sender_id, recipient_id, content, message_type, is_read, created_at) VALUES ($1, $2, $3, $4, $5, false, NOW())',
+          [groupId, admin.id, userId, reviseMsg, 'text']
+        );
+      }
+    } catch (dmErr) { console.error('Pledge revision DM error:', dmErr.message); }
 
     await client.query('COMMIT');
 

@@ -148,4 +148,33 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// ── DELETE /api/messages/:messageId ────────────────────────────────
+router.delete('/:messageId', auth, async (req, res) => {
+  try {
+    const userId    = req.user.id;
+    const messageId = req.params.messageId;
+
+    // Only the sender can delete their own message
+    const msg = await pool.query(
+      'SELECT id, sender_id FROM messages WHERE id = $1',
+      [messageId]
+    );
+
+    if (msg.rows.length === 0) {
+      return res.status(404).json({ message: 'Message not found' });
+    }
+
+    if (msg.rows[0].sender_id !== userId) {
+      return res.status(403).json({ message: 'You can only delete your own messages' });
+    }
+
+    await pool.query('DELETE FROM messages WHERE id = $1', [messageId]);
+
+    res.json({ message: 'Message deleted successfully' });
+  } catch (err) {
+    console.error('DELETE /messages/:messageId error:', err.message);
+    res.status(500).json({ message: 'Failed to delete message' });
+  }
+});
+
 export default router;

@@ -1,26 +1,19 @@
 import express from 'express';
 import { auth } from '../middleware/auth.js';
 import {
-  register,
-  login,
-  getMe,
-  updateProfile,
-  changePassword,
-  getUserProfile,
-  sendOtp,
-  verifyOtp
+  register, login, getMe, updateProfile, changePassword,
+  getUserProfile, sendOtp, verifyOtp, deleteAccount
 } from '../controllers/authController.js';
 
 const router = express.Router();
 
-// Public routes
 router.post('/register', register);
 router.post('/login', login);
 
-// Protected routes
 router.get('/me', auth, getMe);
 router.put('/profile', auth, updateProfile);
 router.put('/password', auth, changePassword);
+router.delete('/account', auth, deleteAccount);
 router.get('/user/:userId', auth, getUserProfile);
 
 router.post('/send-otp', sendOtp);

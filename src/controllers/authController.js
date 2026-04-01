@@ -29,7 +29,7 @@ const sendOtpEmail = async (email, firstName, otp) => {
         </p>
         <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:24px 0;">
         <p style="color:rgba(255,255,255,0.3);font-size:11px;text-align:center;">
-          © 2026 Landfolks Aitech (U) Ltd · theteam@webale.net
+          © 2026 Landfolks Aitech Ltd · theteam@webale.net
         </p>
       </div>
     `,
@@ -364,10 +364,35 @@ export const deleteAccount = async (req, res) => {
       });
     }
 
-    await db.query('DELETE FROM group_members WHERE user_id = $1', [userId]);
-    await db.query('DELETE FROM messages WHERE sender_id = $1', [userId]);
+    // Delete in correct order to avoid foreign key violations
+    // 1. Delete user's pledges (paid, cancelled, etc.)
+    await db.query('DELETE FROM pledges WHERE user_id = $1', [userId]);
+
+    // 2. Delete recurring pledges
+    await db.query('DELETE FROM recurring_pledges WHERE user_id = $1', [userId]).catch(() => {});
+
+    // 3. Delete activity log entries
+    await db.query('DELETE FROM activity_log WHERE user_id = $1', [userId]).catch(() => {});
+
+    // 4. Delete messages (sent and received)
+    await db.query('DELETE FROM messages WHERE sender_id = $1 OR recipient_id = $1', [userId]);
+
+    // 5. Delete notifications
     await db.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
-    await db.query('DELETE FROM groups WHERE created_by = $1 AND id NOT IN (SELECT group_id FROM group_members)', [userId]);
+
+    // 6. Remove from all groups
+    await db.query('DELETE FROM group_members WHERE user_id = $1', [userId]);
+
+    // 7. Delete invitations sent by user
+    await db.query('DELETE FROM invitations WHERE invited_by = $1', [userId]).catch(() => {});
+
+    // 8. Delete empty groups owned by this user (no remaining members)
+    await db.query(
+      `DELETE FROM groups WHERE created_by = $1 AND id NOT IN (SELECT DISTINCT group_id FROM group_members)`,
+      [userId]
+    ).catch(() => {});
+
+    // 9. Finally delete the user
     await db.query('DELETE FROM users WHERE id = $1', [userId]);
 
     res.json({ success: true, message: 'Your account has been permanently deleted. We are sorry to see you go.' });

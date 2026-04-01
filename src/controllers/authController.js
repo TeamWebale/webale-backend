@@ -312,6 +312,71 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
+// ── Delete Account ────────────────────────────────────────────────
+export const deleteAccount = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required to delete your account' });
+    }
+
+    const userResult = await db.query('SELECT password, email, first_name FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const isMatch = await bcrypt.compare(password, userResult.rows[0].password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Incorrect password' });
+    }
+
+    const pendingPledges = await db.query(
+      `SELECT p.id, p.amount, p.pledge_currency, g.name as group_name
+       FROM pledges p JOIN groups g ON g.id = p.group_id
+       WHERE p.user_id = $1 AND p.status = 'pledged'`,
+      [userId]
+    );
+
+    if (pendingPledges.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have pending pledges that must be resolved before deleting your account.',
+        data: { pendingPledges: pendingPledges.rows, hint: 'Please go to each group and either fulfill, revise, or revoke your pending pledges first.' }
+      });
+    }
+
+    const adminGroups = await db.query(
+      `SELECT g.id, g.name FROM groups g
+       JOIN group_members gm ON gm.group_id = g.id
+       WHERE gm.user_id = $1 AND gm.role = 'admin'
+       AND (SELECT COUNT(*) FROM group_members gm2 WHERE gm2.group_id = g.id AND gm2.role = 'admin') = 1
+       AND (SELECT COUNT(*) FROM group_members gm3 WHERE gm3.group_id = g.id) > 1`,
+      [userId]
+    );
+
+    if (adminGroups.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are the only admin in groups that still have members. Please transfer ownership first.',
+        data: { adminGroups: adminGroups.rows, hint: 'Go to each group, Admin tab, and transfer ownership.' }
+      });
+    }
+
+    await db.query('DELETE FROM group_members WHERE user_id = $1', [userId]);
+    await db.query('DELETE FROM messages WHERE sender_id = $1', [userId]);
+    await db.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
+    await db.query('DELETE FROM groups WHERE created_by = $1 AND id NOT IN (SELECT group_id FROM group_members)', [userId]);
+    await db.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    res.json({ success: true, message: 'Your account has been permanently deleted. We are sorry to see you go.' });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete account. Please contact support.' });
+  }
+};
+
 // ── Send OTP ──────────────────────────────────────────────────────
 export const sendOtp = async (req, res) => {
   try {

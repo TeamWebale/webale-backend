@@ -1,5 +1,6 @@
 import pool from '../config/database.js';
 import { logActivity, ACTIVITY_TYPES } from '../utils/activityLogger.js';
+import SubscriptionService from '../services/SubscriptionService.js';
 
 export const createPledge = async (req, res) => {
   const client = await pool.connect();
@@ -17,6 +18,22 @@ export const createPledge = async (req, res) => {
       donorName
     } = req.body;
     const userId = req.user.id;
+
+    // ── Subscription gate: check if user can pledge ──
+    try {
+      const subCheck = await SubscriptionService.canPledge(userId, groupId);
+      if (!subCheck.allowed) {
+        client.release();
+        return res.status(403).json({
+          success: false,
+          message: subCheck.message || 'Subscription required to make pledges.',
+          data: { subscriptionRequired: true, freePledgesRemaining: 0 }
+        });
+      }
+    } catch (subErr) {
+      console.warn('Subscription check failed (non-blocking):', subErr.message);
+      // Allow pledge if subscription check fails — don't block users
+    }
 
     if (!amount || parseFloat(amount) <= 0) {
       return res.status(400).json({
@@ -146,6 +163,16 @@ export const createPledge = async (req, res) => {
         );
       }
     } catch (dmErr) { console.error('Pledge thank-you DM error:', dmErr.message); }
+
+    // ── Decrement free pledge counter or increment total ──
+    try {
+      const subStatus = await SubscriptionService.canPledge(userId, groupId);
+      if (subStatus.reason === 'free_pledge') {
+        await SubscriptionService.useFreesPledge(userId);
+      } else {
+        await SubscriptionService.incrementPledgeCount(userId);
+      }
+    } catch (subErr) { console.warn('Pledge counter update failed:', subErr.message); }
 
     await client.query('COMMIT');
 
